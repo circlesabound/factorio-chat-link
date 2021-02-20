@@ -1,12 +1,14 @@
-use std::sync::Arc;
-
 use logwatcher::{LogWatcher, LogWatcherAction};
-use serenity::{async_trait, http::Http, model::{channel::Message, gateway::Ready, id::ChannelId}, prelude::*};
-use tokio::{sync::mpsc, task::{JoinHandle, spawn_blocking}};
+use serenity::{
+    async_trait,
+    http::Http,
+    model::{channel::Message, gateway::Ready, id::ChannelId},
+    prelude::*,
+};
 use tokio::fs;
+use tokio::sync::mpsc;
 
-struct Handler {
-}
+struct Handler {}
 
 #[async_trait]
 impl EventHandler for Handler {
@@ -29,7 +31,9 @@ struct Config {
 #[tokio::main]
 async fn main() {
     println!("reading config");
-    let config_str = fs::read_to_string("config.toml").await.expect("Missing config.toml");
+    let config_str = fs::read_to_string("config.toml")
+        .await
+        .expect("Missing config.toml");
     let config: Config = toml::from_str(&config_str).expect("invalid config.toml");
 
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -37,7 +41,8 @@ async fn main() {
     println!("setting up logwatcher");
     let config_clone = config.clone();
     tokio::task::spawn_blocking(move || {
-        let mut logwatcher = LogWatcher::register(config_clone.log_file_path).expect("could not register logwatcher");
+        let mut logwatcher = LogWatcher::register(config_clone.log_file_path)
+            .expect("could not register logwatcher");
         logwatcher.watch(&mut move |mut line| {
             if let Some(offset) = line.find(" [CHAT] ") {
                 line.replace_range(..offset, "");
@@ -54,7 +59,10 @@ async fn main() {
         let http = Http::new_with_token(&config_clone.discord_token);
         let channel = ChannelId(config_clone.channel_id);
         while let Some(line) = rx.recv().await {
-            channel.say(&http, line).await.expect("writer coudn't send message");
+            channel
+                .say(&http, line)
+                .await
+                .expect("writer coudn't send message");
         }
     });
 
