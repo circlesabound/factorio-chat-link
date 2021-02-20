@@ -45,7 +45,7 @@ async fn main() {
             .expect("could not register logwatcher");
         logwatcher.watch(&mut move |mut line| {
             if let Some(offset) = line.find(" [CHAT] ") {
-                line.replace_range(..offset, "");
+                line.replace_range(..offset+8, "");
                 tx.send(line).expect("couldn't send line to mpsc channel");
             }
             LogWatcherAction::None
