@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
 use logwatcher::{LogWatcher, LogWatcherAction};
-use serenity::{async_trait, model::{channel::Message, gateway::Ready, id::ChannelId}, prelude::*};
-use tokio::sync::mpsc;
+use serenity::{async_trait, http::Http, model::{channel::Message, gateway::Ready, id::ChannelId}, prelude::*};
+use tokio::{sync::mpsc, task::{JoinHandle, spawn_blocking}};
 use tokio::fs;
 
 struct Handler {
-    channel_id: u64,
-    rx: Arc<Mutex<mpsc::Receiver<String>>>,
 }
 
 #[async_trait]
@@ -16,22 +14,12 @@ impl EventHandler for Handler {
         //
     }
 
-    async fn ready(&self, ctx: Context, _ready: Ready) {
-        let rx = Arc::clone(&self.rx);
-        let ctx_clone = Arc::new(ctx);
-        let channel = ChannelId(self.channel_id);
-        tokio::spawn(async move {
-            while let Some(line) = rx.lock().await.recv().await {
-                if let Err(e) = channel.say(&ctx_clone, line).await {
-                    println!("Error sending message: {:?}", e);
-                }
-            }
-        });
-        println!("ready");
+    async fn ready(&self, _ctx: Context, _ready: Ready) {
+        println!("handler ready");
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 struct Config {
     channel_id: u64,
     discord_token: String,
@@ -40,25 +28,43 @@ struct Config {
 
 #[tokio::main]
 async fn main() {
+    println!("reading config");
     let config_str = fs::read_to_string("config.toml").await.expect("Missing config.toml");
     let config: Config = toml::from_str(&config_str).expect("invalid config.toml");
 
-    let (tx, rx) = mpsc::channel(100);
+    let (tx, mut rx) = mpsc::unbounded_channel();
 
-    let mut logwatcher = LogWatcher::register(config.log_file_path).expect("could not register logwatcher");
-    logwatcher.watch(&mut move |line| {
-        tx.blocking_send(line).unwrap();
-        LogWatcherAction::None
+    println!("setting up logwatcher");
+    let config_clone = config.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut logwatcher = LogWatcher::register(config_clone.log_file_path).expect("could not register logwatcher");
+        logwatcher.watch(&mut move |mut line| {
+            if let Some(offset) = line.find(" [CHAT] ") {
+                line.replace_range(..offset, "");
+                tx.send(line).expect("couldn't send line to mpsc channel");
+            }
+            LogWatcherAction::None
+        });
+        println!("logwatcher task exiting");
     });
 
+    println!("setting up writer");
+    let config_clone = config.clone();
+    tokio::spawn(async move {
+        let http = Http::new_with_token(&config_clone.discord_token);
+        let channel = ChannelId(config_clone.channel_id);
+        while let Some(line) = rx.recv().await {
+            channel.say(&http, line).await.expect("writer coudn't send message");
+        }
+    });
+
+    println!("setting up discord client");
     let mut discord_client = Client::builder(&config.discord_token)
-        .event_handler(Handler {
-            channel_id: config.channel_id,
-            rx: Arc::new(Mutex::new(rx)),
-        })
+        .event_handler(Handler {})
         .await
         .expect("error creating client");
 
+    println!("starting discord client");
     if let Err(e) = discord_client.start().await {
         println!("Client error: {:?}", e);
     }
