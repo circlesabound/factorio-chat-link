@@ -21,7 +21,7 @@ impl EventHandler for Handler {
         if msg.channel_id == self.listen_channel_id && !msg.author.bot {
             // TODO handle empty messages with embeds, attachments, etc
             let message_text = format!("{}: {}", msg.author.name, msg.content);
-            let message_text = message_text.replace('\\', "\\\\'");
+            let message_text = message_text.replace('\\', "\\\\");
             let message_text = message_text.replace('\'', "\\'");
             println!("Got valid discord message, formating as: {}", message_text);
             if let Err(e) = self
