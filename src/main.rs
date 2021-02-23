@@ -13,26 +13,23 @@ use tokio::sync::mpsc;
 struct Handler {
     listen_channel_id: u64,
     rcon_connection: Mutex<rcon::Connection>,
-    _cache: serenity::cache::Cache,
 }
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, _ctx: Context, msg: Message) {
-        if msg.channel_id == self.listen_channel_id {
-            if !msg.is_own(&self._cache).await {
-                // TODO handle empty messages with embeds, attachments, etc
-                let message_text = format!("{}: {}", msg.author.name, msg.content);
-                self.rcon_connection
-                    .lock()
-                    .await
-                    .cmd(&format!(
-                        "/silent-command game.print('[Discord] {}')",
-                        message_text
-                    ))
-                    .await
-                    .expect("couldn't send message to rcon");
-            }
+        if msg.channel_id == self.listen_channel_id && !msg.author.bot {
+            // TODO handle empty messages with embeds, attachments, etc
+            let message_text = format!("{}: {}", msg.author.name, msg.content);
+            self.rcon_connection
+                .lock()
+                .await
+                .cmd(&format!(
+                    "/silent-command game.print('[Discord] {}')",
+                    message_text
+                ))
+                .await
+                .expect("couldn't send message to rcon");
         }
     }
 
@@ -43,13 +40,9 @@ impl EventHandler for Handler {
 
 impl Handler {
     fn new(listen_channel_id: u64, rcon_connection: rcon::Connection) -> Handler {
-        let mut cache_settings = serenity::cache::Settings::new();
-        cache_settings.max_messages(20);
-
         Handler {
             listen_channel_id,
             rcon_connection: Mutex::new(rcon_connection),
-            _cache: serenity::cache::Cache::new_with_settings(cache_settings),
         }
     }
 }
