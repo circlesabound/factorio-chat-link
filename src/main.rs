@@ -1,7 +1,12 @@
 use std::error::Error;
 
 use logwatcher::{LogWatcher, LogWatcherAction};
-use serenity::{async_trait, http::Http, model::{channel::Message, gateway::Ready, id::ChannelId}, prelude::*};
+use serenity::{
+    async_trait,
+    http::Http,
+    model::{channel::Message, gateway::Ready, id::ChannelId},
+    prelude::*,
+};
 use tokio::fs;
 use tokio::sync::mpsc;
 
@@ -16,14 +21,17 @@ impl EventHandler for Handler {
     async fn message(&self, _ctx: Context, msg: Message) {
         if msg.channel_id == self.listen_channel_id {
             if !msg.is_own(&self._cache).await {
-                let message_context = msg.content.clone();
-                let message_author = msg.author_nick(_ctx).await.unwrap_or_else(|| {
-                    let author_username = msg.author.name;
-                    println!("Failed to get nickname, falling back to username {}", author_username);
-                    author_username
-                });
-                let message_text = format!("{}: {}", message_author, message_context);
-                self.rcon_connection.lock().await.cmd(&format!("/c game.print('{}')", message_text)).await.expect("couldn't send message to rcon");
+                // TODO handle empty messages with embeds, attachments, etc
+                let message_text = format!("{}: {}", msg.author.name, msg.content);
+                self.rcon_connection
+                    .lock()
+                    .await
+                    .cmd(&format!(
+                        "/silent-command game.print('[Discord] {}')",
+                        message_text
+                    ))
+                    .await
+                    .expect("couldn't send message to rcon");
             }
         }
     }
@@ -64,7 +72,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("setting up rcon client");
     let rcon = rcon::Connection::builder()
         .enable_factorio_quirks(true)
-        .connect(config.rcon_address.clone(), &config.rcon_password).await?;
+        .connect(config.rcon_address.clone(), &config.rcon_password)
+        .await?;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -73,10 +82,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tokio::task::spawn_blocking(move || {
         let mut logwatcher = LogWatcher::register(config_clone.log_file_path)
             .expect("could not register logwatcher");
-        logwatcher.watch(&mut move |mut line| {
-            if let Some(offset) = line.find(" [CHAT] ") {
-                line.replace_range(..offset+8, "");
-                tx.send(line).expect("couldn't send line to mpsc channel");
+        logwatcher.watch(&mut move |line| {
+            if let Some(msg) = try_get_log_chat_message(line) {
+                tx.send(msg).expect("couldn't send line to mpsc channel");
             }
             LogWatcherAction::None
         });
@@ -105,4 +113,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     discord_client.start().await?;
 
     unreachable!()
+}
+
+fn try_get_log_chat_message(mut line: String) -> Option<String> {
+    if let Some(offset) = line.find(" [CHAT] ") {
+        line.replace_range(..offset + 8, "");
+        if !line.starts_with("[Discord]") {
+            return Some(line);
+        }
+    }
+
+    None
 }
