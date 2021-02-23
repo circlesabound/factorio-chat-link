@@ -23,7 +23,7 @@ impl EventHandler for Handler {
                     author_username
                 });
                 let message_text = format!("{}: {}", message_author, message_context);
-                self.rcon_connection.lock().await.cmd(&format!("/c print('{}')", message_text)).await.expect("couldn't send message to rcon");
+                self.rcon_connection.lock().await.cmd(&format!("/c game.print('{}')", message_text)).await.expect("couldn't send message to rcon");
             }
         }
     }
