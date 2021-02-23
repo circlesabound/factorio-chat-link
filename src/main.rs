@@ -23,7 +23,6 @@ impl EventHandler for Handler {
             let message_text = format!("{}: {}", msg.author.name, msg.content);
             let message_text = message_text.replace('\\', "\\\\");
             let message_text = message_text.replace('\'', "\\'");
-            println!("Got valid discord message, formating as: {}", message_text);
             if let Err(e) = self
                 .rcon_connection
                 .lock()
