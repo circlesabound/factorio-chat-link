@@ -1,23 +1,48 @@
+use std::error::Error;
+
 use logwatcher::{LogWatcher, LogWatcherAction};
-use serenity::{
-    async_trait,
-    http::Http,
-    model::{channel::Message, gateway::Ready, id::ChannelId},
-    prelude::*,
-};
+use serenity::{async_trait, http::Http, model::{channel::Message, gateway::Ready, id::ChannelId}, prelude::*};
 use tokio::fs;
 use tokio::sync::mpsc;
 
-struct Handler {}
+struct Handler {
+    listen_channel_id: u64,
+    rcon_connection: Mutex<rcon::Connection>,
+    _cache: serenity::cache::Cache,
+}
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, _ctx: Context, _msg: Message) {
-        //
+    async fn message(&self, _ctx: Context, msg: Message) {
+        if msg.channel_id == self.listen_channel_id {
+            if !msg.is_own(&self._cache).await {
+                let message_context = msg.content.clone();
+                let message_author = msg.author_nick(_ctx).await.unwrap_or_else(|| {
+                    let author_username = msg.author.name;
+                    println!("Failed to get nickname, falling back to username {}", author_username);
+                    author_username
+                });
+                let message_text = format!("{}: {}", message_author, message_context);
+                self.rcon_connection.lock().await.cmd(&format!("/c print('{}')", message_text)).await.expect("couldn't send message to rcon");
+            }
+        }
     }
 
     async fn ready(&self, _ctx: Context, _ready: Ready) {
-        println!("handler ready");
+        println!("Discord event handler ready");
+    }
+}
+
+impl Handler {
+    fn new(listen_channel_id: u64, rcon_connection: rcon::Connection) -> Handler {
+        let mut cache_settings = serenity::cache::Settings::new();
+        cache_settings.max_messages(20);
+
+        Handler {
+            listen_channel_id,
+            rcon_connection: Mutex::new(rcon_connection),
+            _cache: serenity::cache::Cache::new_with_settings(cache_settings),
+        }
     }
 }
 
@@ -26,15 +51,20 @@ struct Config {
     channel_id: u64,
     discord_token: String,
     log_file_path: String,
+    rcon_address: String,
+    rcon_password: String,
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn Error>> {
     println!("reading config");
-    let config_str = fs::read_to_string("config.toml")
-        .await
-        .expect("Missing config.toml");
-    let config: Config = toml::from_str(&config_str).expect("invalid config.toml");
+    let config_str = fs::read_to_string("config.toml").await?;
+    let config: Config = toml::from_str(&config_str)?;
+
+    println!("setting up rcon client");
+    let rcon = rcon::Connection::builder()
+        .enable_factorio_quirks(true)
+        .connect(config.rcon_address.clone(), &config.rcon_password).await?;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -53,7 +83,7 @@ async fn main() {
         println!("logwatcher task exiting");
     });
 
-    println!("setting up writer");
+    println!("setting up discord writer");
     let config_clone = config.clone();
     tokio::spawn(async move {
         let http = Http::new_with_token(&config_clone.discord_token);
@@ -62,18 +92,17 @@ async fn main() {
             channel
                 .say(&http, line)
                 .await
-                .expect("writer coudn't send message");
+                .expect("couldn't send message to discord");
         }
     });
 
     println!("setting up discord client");
     let mut discord_client = Client::builder(&config.discord_token)
-        .event_handler(Handler {})
-        .await
-        .expect("error creating client");
+        .event_handler(Handler::new(config.channel_id, rcon))
+        .await?;
 
     println!("starting discord client");
-    if let Err(e) = discord_client.start().await {
-        println!("Client error: {:?}", e);
-    }
+    discord_client.start().await?;
+
+    unreachable!()
 }
