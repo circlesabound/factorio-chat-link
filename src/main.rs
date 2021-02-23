@@ -21,7 +21,9 @@ impl EventHandler for Handler {
         if msg.channel_id == self.listen_channel_id && !msg.author.bot {
             // TODO handle empty messages with embeds, attachments, etc
             let message_text = format!("{}: {}", msg.author.name, msg.content);
-            self.rcon_connection
+            println!("Got valid discord message, formating as: {}", message_text);
+            if let Err(e) = self
+                .rcon_connection
                 .lock()
                 .await
                 .cmd(&format!(
@@ -29,7 +31,9 @@ impl EventHandler for Handler {
                     message_text
                 ))
                 .await
-                .expect("couldn't send message to rcon");
+            {
+                println!("Couldn't send message to rcon: {:?}", e);
+            }
         }
     }
 
